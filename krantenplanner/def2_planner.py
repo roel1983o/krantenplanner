@@ -633,7 +633,7 @@ def run_def2(*, templates_path: str, beslispad_spread_path: str, beslispad_ep_pa
 
 
     def run_runs(runs):
-        global success
+        nonlocal success
         for posname in runs:
             if posname not in plan_wb.sheetnames:
                 log(f"Run {posname}: tabblad ontbreekt.")
