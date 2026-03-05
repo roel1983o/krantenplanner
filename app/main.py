@@ -1,9 +1,8 @@
-import os
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from krantenplanner.pipeline import run_pipeline
@@ -17,32 +16,43 @@ app = FastAPI(title="Krantenplanner V1.1")
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-def _save_upload(upload: UploadFile, dest: Path):
+
+def _save_upload(upload: UploadFile, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     with dest.open("wb") as f:
         f.write(upload.file.read())
 
+
+def _ensure_run_id(run_id: str | None) -> str:
+    return run_id or str(uuid.uuid4())
+
+
 @app.post("/upload/kordiam")
-async def upload_kordiam(run_id: str, file: UploadFile = File(...)):
+async def upload_kordiam(
+    file: UploadFile = File(...),
+    run_id: str | None = Query(default=None),
+):
+    run_id = _ensure_run_id(run_id)
     run_dir = RUNS_DIR / run_id
     _save_upload(file, run_dir / "kordiam_report.xlsx")
     return {"run_id": run_id}
 
+
 @app.post("/upload/posities")
-async def upload_posities(file: UploadFile = File(...)):
-    run_id = (await _get_or_create_run_id())
+async def upload_posities(
+    file: UploadFile = File(...),
+    run_id: str | None = Query(default=None),
+):
+    run_id = _ensure_run_id(run_id)
     run_dir = RUNS_DIR / run_id
     _save_upload(file, run_dir / "posities_en_kenmerken.xlsx")
     return {"run_id": run_id}
 
-async def _get_or_create_run_id():
-    # simple: client passes run_id header; else create new and return
-    # (the frontend stores it)
-    return str(uuid.uuid4())
 
 @app.post("/generate")
 async def generate(payload: dict):
@@ -53,11 +63,12 @@ async def generate(payload: dict):
     run_dir = RUNS_DIR / run_id
     kordiam = run_dir / "kordiam_report.xlsx"
     posities = run_dir / "posities_en_kenmerken.xlsx"
+
     if not kordiam.exists() or not posities.exists():
         raise HTTPException(status_code=400, detail="Upload both files first")
 
     # Run pipeline
-    out = run_pipeline(
+    run_pipeline(
         kordiam_report_xlsx=str(kordiam),
         posities_xlsx=str(posities),
         workdir=str(run_dir),
@@ -68,12 +79,14 @@ async def generate(payload: dict):
         "handout_pdf": f"/download/{run_id}/handout",
     }
 
+
 @app.get("/download/{run_id}/krantenplanning")
 async def download_krantenplanning(run_id: str):
     p = RUNS_DIR / run_id / "Krantenplanning.xlsx"
     if not p.exists():
         raise HTTPException(status_code=404, detail="Krantenplanning not found")
     return FileResponse(str(p), filename="Krantenplanning.xlsx")
+
 
 @app.get("/download/{run_id}/handout")
 async def download_handout(run_id: str):
