@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Krantenplanner V1.1</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #111; }
+    h1 { margin: 0 0 18px 0; font-size: 28px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; max-width: 720px; }
+    .row { display: flex; gap: 12px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+    .row label { width: 260px; font-weight: 700; }
+    input[type="file"] { flex: 1; }
+    button { padding: 10px 14px; border: 0; border-radius: 10px; background: #111827; color: #fff; cursor: pointer; font-weight: 700; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    .muted { color: #6b7280; }
+    .status { margin-top: 10px; font-weight: 700; }
+    .downloads { margin-top: 14px; display: none; gap: 10px; flex-wrap: wrap; }
+    .downloads a { display: inline-block; padding: 10px 14px; border-radius: 10px; background: #0f766e; color: #fff; text-decoration: none; font-weight: 800; }
+    .timer { margin-top: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  </style>
+</head>
+<body>
+  <h1>Krantenplanner V1.1</h1>
+
+  <div class="card">
+    <div class="row">
+      <label>Kordiam Report (xlsx)</label>
+      <input id="kordiamFile" type="file" accept=".xlsx" />
+      <button id="uploadKordiam">Upload</button>
+      <span id="kordiamOk" class="muted"></span>
+    </div>
+
+    <div class="row">
+      <label>Posities en kenmerken (xlsx)</label>
+      <input id="positiesFile" type="file" accept=".xlsx" />
+      <button id="uploadPosities">Upload</button>
+      <span id="positiesOk" class="muted"></span>
+    </div>
+
+    <div class="row" style="margin-top:14px;">
+      <button id="generateBtn" disabled>Genereer krantenplanning</button>
+    </div>
+
+    <div id="status" class="status muted"></div>
+    <div id="timer" class="timer"></div>
+
+    <div id="downloads" class="downloads">
+      <a id="dlXlsx" href="#" download>Download planning in Excel</a>
+      <a id="dlPdf" href="#" download>Download hand-out in PDF</a>
+    </div>
+  </div>
+
+<script>
+  let runId = null;
+  let kordiamUploaded = false;
+  let positiesUploaded = false;
+
+  const el = (id) => document.getElementById(id);
+
+  function updateGenerateState() {
+    el("generateBtn").disabled = !(kordiamUploaded && positiesUploaded);
+  }
+
+  async function uploadFile(endpoint, file) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(endpoint, { method: "POST", body: fd });
+    if (!res.ok) throw new Error(await res.text());
+    return await res.json();
+  }
+
+  el("uploadKordiam").addEventListener("click", async () => {
+    const f = el("kordiamFile").files[0];
+    if (!f) return alert("Kies eerst een Kordiam Report (xlsx).");
+    el("kordiamOk").textContent = "uploaden…";
+    try {
+      const data = await uploadFile("/upload/kordiam", f);
+      runId = data.run_id;
+      kordiamUploaded = true;
+      el("kordiamOk").textContent = "✓ geupload";
+      updateGenerateState();
+    } catch (e) {
+      el("kordiamOk").textContent = "";
+      alert("Upload mislukt: " + e.message);
+    }
+  });
+
+  el("uploadPosities").addEventListener("click", async () => {
+    const f = el("positiesFile").files[0];
+    if (!f) return alert("Kies eerst Posities en kenmerken (xlsx).");
+    el("positiesOk").textContent = "uploaden…";
+    try {
+      const data = await uploadFile("/upload/posities", f);
+      runId = data.run_id; // stored in frontend (simple approach)
+      positiesUploaded = true;
+      el("positiesOk").textContent = "✓ geupload";
+      updateGenerateState();
+    } catch (e) {
+      el("positiesOk").textContent = "";
+      alert("Upload mislukt: " + e.message);
+    }
+  });
+
+  function fmtTime(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    const mm = String(m).padStart(2, "0");
+    const ss = String(s).padStart(2, "0");
+    return `${mm} minuten en ${ss} seconden`;
+  }
+
+  let timerHandle = null;
+  let startTs = null;
+
+  function startTimer() {
+    startTs = Date.now();
+    el("timer").textContent = "Krantenplanning in uitvoering: " + fmtTime(0);
+    timerHandle = setInterval(() => {
+      const sec = Math.floor((Date.now() - startTs) / 1000);
+      el("timer").textContent = "Krantenplanning in uitvoering: " + fmtTime(sec);
+    }, 250);
+  }
+
+  function stopTimer() {
+    if (timerHandle) clearInterval(timerHandle);
+    timerHandle = null;
+  }
+
+  el("generateBtn").addEventListener("click", async () => {
+    if (!runId) return alert("Upload eerst beide bestanden.");
+    el("downloads").style.display = "none";
+    el("status").textContent = "Bezig met genereren…";
+    el("status").className = "status";
+    el("generateBtn").disabled = true;
+    startTimer();
+
+    try {
+      const res = await fetch("/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_id: runId })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+
+      stopTimer();
+      el("status").textContent = "✅ Klaar";
+      el("dlXlsx").href = data.krantenplanning_xlsx;
+      el("dlPdf").href = data.handout_pdf;
+      el("downloads").style.display = "flex";
+    } catch (e) {
+      stopTimer();
+      el("status").textContent = "❌ Mislukt: " + e.message;
+      updateGenerateState();
+    }
+  });
+</script>
+</body>
+</html>
