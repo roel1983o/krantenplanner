@@ -27,8 +27,7 @@ def _save_upload(upload: UploadFile, dest: Path):
         f.write(upload.file.read())
 
 @app.post("/upload/kordiam")
-async def upload_kordiam(file: UploadFile = File(...)):
-    run_id = (await _get_or_create_run_id())
+async def upload_kordiam(run_id: str, file: UploadFile = File(...)):
     run_dir = RUNS_DIR / run_id
     _save_upload(file, run_dir / "kordiam_report.xlsx")
     return {"run_id": run_id}
